@@ -1,0 +1,7 @@
+[LOGIN CREDENTIALS]
+homeserver = https://matrix.org.example
+user_id = @example.matrix.org.example
+password = example
+device_id = example
+access_token = example
+
