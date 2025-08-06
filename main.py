@@ -5,10 +5,9 @@ import mimetypes
 import os
 import random
 import string
-import sys
 import traceback
 from io import BytesIO
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -17,16 +16,15 @@ from hypercorn.config import Config
 from nio import (
     AsyncClient,
     DownloadResponse,
-    LoginResponse,
     RoomGetEventResponse,
 )
 from logging.handlers import TimedRotatingFileHandler
 
-# Глобальные переменные с аннотациями типов
-client: Optional[AsyncClient] = None
-log: Optional[logging.Logger] = None
-web: Optional[FastAPI] = None
-config: Optional[Dict[str, Any]] = None
+
+client = None
+log = None
+web = None
+config = None
 
 
 def setup_logging() -> logging.Logger:
@@ -34,15 +32,12 @@ def setup_logging() -> logging.Logger:
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
-    # Очистка существующих обработчиков
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
-    
-    # Создание директории для логов
+
     log_dir = "logs"
     os.makedirs(log_dir, exist_ok=True)
     
-    # Настройка ротирующего обработчика
     handler = TimedRotatingFileHandler(
         filename=os.path.join(log_dir, 'matrix_bot.log'),
         when='midnight',
@@ -59,7 +54,6 @@ def setup_logging() -> logging.Logger:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     
-    # Уменьшение уровня логирования для внешних библиотек
     logging.getLogger("nio").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
@@ -236,7 +230,6 @@ async def main() -> None:
     global log, config, client, web
     
     try:
-        # Инициализация компонентов
         log = setup_logging()
         config = await load_config()
         client = await initialize_client()
@@ -244,7 +237,6 @@ async def main() -> None:
         
         log.info("Инициализация прошла успешно")
         
-        # Запуск основных компонентов
         await asyncio.gather(
             run_web_server(),
             run_matrix_bot(),
