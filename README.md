@@ -10,10 +10,12 @@
 ```bash
 git clone https://github.com/erkdot/matrix-bot_show-image.git
 cd matrix-bot_show-image
+```
 
 2. Установите зависимости:
 ```
 pip install -r requirements.txt
+```
 
 3. Настройте конфигурацию (config.ini):
 ```
@@ -28,6 +30,7 @@ when = midnight
 interval = 1
 backupCount = 10
 encoding = utf-8
+```
 
 4. Запуск
 ```
@@ -36,7 +39,9 @@ python3 main.py
 5.Отправьте запрос на:
 ```
 http://ваш-сервер/image/!room_id:server.com/$event_id
+```
 
 пример:
 ```
 http://localhost:8000/image/!abcdefg:matrix.org/$1234567890
+```
