@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import os
 import random
+import re
 import string
 import traceback
 from io import BytesIO
@@ -16,6 +17,8 @@ from nio import (
     AsyncClient,
     DownloadResponse,
     RoomGetEventResponse,
+    JoinError,
+    InviteEvent
 )
 from logging.handlers import TimedRotatingFileHandler
 
@@ -80,11 +83,17 @@ async def load_config():
     if missing_keys:
         raise ValueError(f"Отсутствуют обязательные параметры в конфигурации: {', '.join(missing_keys)}")
     
-    return {
+    config_dict = {
         "homeserver": parser["LOGIN CREDENTIALS"]["homeserver"],
         "user_id": parser["LOGIN CREDENTIALS"]["user_id"],
         "password": parser["LOGIN CREDENTIALS"]["password"],
     }
+    
+    for section in parser.sections():
+        if section != "LOGIN CREDENTIALS":
+            config_dict[section] = dict(parser[section])
+    
+    return config_dict
 
 
 async def initialize_client():
@@ -107,6 +116,7 @@ async def initialize_client():
                 device_name="Matrix Image Bot"
             )
 
+            client.add_event_callback(invite_cb, InviteEvent)
 
             if log:
                 log.info("Успешный вход в Matrix по паролю")
@@ -136,7 +146,7 @@ def create_web_app():
             
             mxc_url, filename = await find_mxc_url(client, url)
             if log:
-                log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}")
+                log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}. Успешно")
             
             response = await client.download(mxc_url)
             if not isinstance(response, DownloadResponse):
@@ -165,6 +175,58 @@ def create_web_app():
             raise HTTPException(status_code=400, detail=error_msg)
 
     return app
+
+def check_allow_invite(user):
+    global config, log
+    try:
+        if "INVITE" not in config:
+            log.warning("Секция INVITE не найдена в конфиге")
+            return False
+        
+        allow_users = [u.strip() for u in config["INVITE"].get("allow_users", "").split() if u.strip()]
+        
+        log.debug(f"Проверка пользователя: {user}")
+        log.debug(f"Разрешенные пользователи: {allow_users}")
+        
+        if user in allow_users:
+            log.info(f"Пользователь {user} явно разрешен")
+            return True
+            
+        # Проверка без учета регистра
+        if any(user.lower() == allowed.lower() for allowed in allow_users):
+            log.info(f"Пользователь {user} разрешен (без учета регистра)")
+            return True
+            
+        log.warning(f"Пользователь {user} не найден в списке разрешенных")
+        return False
+        
+    except Exception as e:
+        log.error(f"Ошибка проверки приглашения: {get_exception_traceback_descr(e)}")
+        return False
+
+async def invite_cb(room, event):
+    global client, log
+    try:
+        log.info(f"Получено приглашение от {event.sender} в комнату {room.room_id}")
+        log.debug(f"Детали события: {vars(event)}")
+        
+        if not check_allow_invite(event.sender):
+            log.warning(f"Доступ запрещён для {event.sender}")
+            return False
+        
+        log.info(f"Принимаем приглашение от {event.sender}")
+        resp = await client.join(room.room_id)
+        
+        if isinstance(resp, JoinError):
+            log.error(f"Ошибка входа: {resp.message}")
+            return False
+        
+        log.info(f"Успешно присоединились к комнате {room.room_id}")
+        return True
+        
+    except Exception as e:
+        log.error(f"Ошибка обработки приглашения: {get_exception_traceback_descr(e)}")
+        return False
 
 
 def get_exception_traceback_descr(e):
@@ -236,7 +298,6 @@ async def check_connection(client):
 
 async def run_matrix_bot():
     global client
-    
     if log:
         log.info("Matrix бот запущен")
     
@@ -244,20 +305,18 @@ async def run_matrix_bot():
         try:
             if not await check_connection(client):
                 if log:
-                    log.warning("Проблема с соединением или аутентификацией, переподключаемся...")
+                    log.warning("Проблема с соединением или аутентификацией, переподключение")
                 await client.close()
                 client = await initialize_client()
                 continue
-                
-            sync_response = await client.sync(timeout=30000, full_state=True)
             
+            sync_response = await client.sync(timeout=30000, full_state=True)
             if hasattr(sync_response, 'next_batch'):
                 if log:
                     log.debug(f"Успешная синхронизация, next_batch: {sync_response.next_batch}")
             else:
                 if log:
                     log.warning(f"Проблема с синхронизацией: {sync_response}")
-
         except asyncio.CancelledError:
             if log:
                 log.info("Синхронизация остановлена по запросу")

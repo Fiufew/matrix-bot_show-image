@@ -9,3 +9,9 @@ when = midnight
 interval = 1
 backupCount = 10
 encoding = utf-8
+
+[INVITE]
+allow_users = @good_user1:spammers.com @good_user2:matrix.org
+allow_domains = *
+deny_users = @baduser:matrix.org @baduser2:tt.net
+deny_domains = spammers.com spammers2.net
