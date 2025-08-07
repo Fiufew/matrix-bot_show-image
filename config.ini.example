@@ -1,7 +1,11 @@
 [LOGIN CREDENTIALS]
-homeserver = https://matrix.org.example
-user_id = @example.matrix.org.example
+homeserver = https://example.domain
+user_id = @example:domain_name.domain
 password = example
-device_id = example
-access_token = example
 
+[LOGGING]
+filename = <dir/filename.log>
+when = midnight
+interval = 1
+backupCount = 10
+encoding = utf-8
