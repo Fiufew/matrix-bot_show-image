@@ -191,8 +191,7 @@ def check_allow_invite(user):
         if user in allow_users:
             log.info(f"Пользователь {user} явно разрешен")
             return True
-            
-        # Проверка без учета регистра
+
         if any(user.lower() == allowed.lower() for allowed in allow_users):
             log.info(f"Пользователь {user} разрешен (без учета регистра)")
             return True
