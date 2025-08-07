@@ -27,29 +27,33 @@ web = None
 config = None
 
 
-def setup_logging() -> logging.Logger:
-    """Инициализация и настройка логирования."""
+def setup_logging(config_file: str = "config.ini") -> logging.Logger:
+    """Инициализация и настройка системы логирования."""
+    global log
+    
+    parser = configparser.ConfigParser()
+    if not parser.read(config_file):
+        raise FileNotFoundError(f"Конфигурационный файл {config_file} не найден")
+
+    log_dir = os.path.dirname(parser["LOGGING"]["filename"])
+    os.makedirs(log_dir, exist_ok=True)
+
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    log_dir = "logs"
-    os.makedirs(log_dir, exist_ok=True)
-    
     handler = TimedRotatingFileHandler(
-        filename=os.path.join(log_dir, 'matrix_bot.log'),
-        when='midnight',
-        interval=1,
-        backupCount=30,
-        encoding='utf-8',
-        utc=True
+        filename=parser["LOGGING"]["filename"],
+        when=parser["LOGGING"]["when"],
+        interval=int(parser["LOGGING"]["interval"]),
+        backupCount=int(parser["LOGGING"]["backupCount"]),
+        encoding=parser["LOGGING"]["encoding"],
     )
-    
+
     formatter = logging.Formatter(
-        "%(asctime)s.%(msecs)03d [%(levelname)-8s] %(name)-20s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        "%(asctime)s - %(name)s - %(filename)s:%(lineno)d - %(funcName)s() %(levelname)s - %(message)s"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -57,52 +61,63 @@ def setup_logging() -> logging.Logger:
     logging.getLogger("nio").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
+    log = logger
     return logger
 
 
 async def load_config() -> Dict[str, Any]:
     """Загрузка конфигурации из файла."""
     config_file = "config.ini"
-    if not os.path.exists(config_file):
-        raise FileNotFoundError(f"Конфигурационный файл {config_file} не найден")
-    
     parser = configparser.ConfigParser()
-    parser.read(config_file)
+    
+    if not parser.read(config_file):
+        raise FileNotFoundError(f"Конфигурационный файл {config_file} не найден")
     
     if not parser.has_section("LOGIN CREDENTIALS"):
         raise ValueError("В конфигурационном файле отсутствует секция LOGIN CREDENTIALS")
     
-    required_keys = ['homeserver', 'user_id', 'password', 'device_id', 'access_token']
-    if not all(key in parser["LOGIN CREDENTIALS"] for key in required_keys):
-        raise ValueError("В конфигурационном файле отсутствуют необходимые ключи")
+    required_keys = ['homeserver', 'user_id', 'password']
+    missing_keys = [key for key in required_keys if key not in parser["LOGIN CREDENTIALS"]]
+    if missing_keys:
+        raise ValueError(f"Отсутствуют обязательные параметры в конфигурации: {', '.join(missing_keys)}")
     
     return {
         "homeserver": parser["LOGIN CREDENTIALS"]["homeserver"],
         "user_id": parser["LOGIN CREDENTIALS"]["user_id"],
         "password": parser["LOGIN CREDENTIALS"]["password"],
-        "device_id": parser["LOGIN CREDENTIALS"]["device_id"],
-        "access_token": parser["LOGIN CREDENTIALS"]["access_token"],
     }
 
 
 async def initialize_client() -> AsyncClient:
-    """Инициализация Matrix клиента."""
-    global client, config
+    """Инициализация клиента Matrix с аутентификацией по паролю."""
+    global client, config, log
     
     if client is None:
         if config is None:
             config = await load_config()
         
-        client = AsyncClient(
-            homeserver=config["homeserver"],
-            user=config["user_id"],
-            ssl=False
-        )
-        client.access_token = config["access_token"]
-        client.user_id = config["user_id"]
-        client.device_id = config["device_id"]
-        
-        log.info("Matrix клиент успешно инициализирован")
+        try:
+            client = AsyncClient(
+                homeserver=config["homeserver"],
+                user=config["user_id"],
+                ssl=False
+            )
+
+            await client.login(
+                password=config["password"],
+                device_name="Matrix Image Bot"
+            )
+
+
+            if log:
+                log.info("Успешный вход в Matrix по паролю")
+                log.debug(f"User ID: {client.user_id}")
+
+        except Exception as e:
+            error_msg = f"Ошибка инициализации клиента: {str(e)}"
+            if log:
+                log.error(error_msg)
+            raise ConnectionError(error_msg)
     
     return client
 
@@ -114,24 +129,28 @@ def create_web_app() -> FastAPI:
     @app.get("/image/{url:path}")
     async def get_matrix_image(url: str):
         """Обработчик запросов изображений."""
-        global client
+        global client, log
         
         try:
-            log.info(f"Запрос изображения по URL: {url}")
+            if log:
+                log.info(f"Запрос изображения по URL: {url}")
             
             mxc_url, filename = await find_mxc_url(client, url)
-            log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}")
+            if log:
+                log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}")
             
             response = await client.download(mxc_url)
             if not isinstance(response, DownloadResponse):
                 error_msg = f"Ошибка загрузки изображения. Ответ сервера: {response}"
-                log.error(error_msg)
+                if log:
+                    log.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
             
             mime_type, _ = mimetypes.guess_type(filename)
             if mime_type is None:
                 mime_type = "image/jpeg"
-                log.warning(f"Не удалось определить тип файла для {filename}, используется image/jpeg")
+                if log:
+                    log.warning(f"Не удалось определить тип файла для {filename}, используется image/jpeg")
             
             return StreamingResponse(
                 BytesIO(response.body),
@@ -142,7 +161,8 @@ def create_web_app() -> FastAPI:
             raise
         except Exception as e:
             error_msg = f"Ошибка обработки запроса {url}: {get_exception_traceback_descr(e)}"
-            log.error(error_msg)
+            if log:
+                log.error(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
 
     return app
@@ -164,9 +184,12 @@ def generate_filename(original_name: str) -> str:
 
 async def find_mxc_url(client: AsyncClient, url: str) -> tuple[str, str]:
     """Извлечение mxc-ссылки и имени файла из URL."""
-    log.info(f"Извлечение mxc-ссылки из {url}")
+    global log
     
     try:
+        if log:
+            log.info(f"Извлечение mxc-ссылки из {url}")
+        
         parts = url.split("/")
         if len(parts) < 2:
             raise ValueError("Неверный формат URL. Ожидается !room_id:server.com/$event_id")
@@ -176,7 +199,8 @@ async def find_mxc_url(client: AsyncClient, url: str) -> tuple[str, str]:
         response = await client.room_get_event(room_id=room_id, event_id=event_id)
         if not isinstance(response, RoomGetEventResponse):
             error_msg = "Неверный ответ от сервера Matrix"
-            log.error(error_msg)
+            if log:
+                log.error(error_msg)
             raise ValueError(error_msg)
         
         content = response.event.source.get('content', {})
@@ -185,35 +209,72 @@ async def find_mxc_url(client: AsyncClient, url: str) -> tuple[str, str]:
         
         if not url_mxc:
             error_msg = "Не удалось извлечь mxc-ссылку"
-            log.error(error_msg)
+            if log:
+                log.error(error_msg)
             raise ValueError(error_msg)
             
         return url_mxc, generate_filename(filename)
         
     except Exception as e:
         error_msg = f"Ошибка обработки URL: {str(e)}"
-        log.error(error_msg)
+        if log:
+            log.error(error_msg)
         raise ValueError(error_msg)
 
+async def check_connection(client: AsyncClient) -> bool:
+    try:
+        await client.sync(timeout=5000)
+        return True
+    except Exception as e:
+        if "M_UNKNOWN_TOKEN" in str(e):
+            if log:
+                log.warning("Обнаружен невалидный токен, требуется переаутентификация")
+            return False
+        if log:
+            log.warning(f"Ошибка проверки соединения: {str(e)}")
+        return False
 
-async def run_matrix_bot() -> None:
-    """Основной цикл работы Matrix бота."""
+
+async def run_matrix_bot():
     global client
     
-    log.info("Matrix бот запущен")
+    if log:
+        log.info("Matrix бот запущен")
+    
     while True:
         try:
-            await client.sync(timeout=30000, full_state=True)
+            if not await check_connection(client):
+                if log:
+                    log.warning("Проблема с соединением или аутентификацией, переподключаемся...")
+                await client.close()
+                client = await initialize_client()
+                continue
+                
+            sync_response = await client.sync(timeout=30000, full_state=True)
+            
+            if hasattr(sync_response, 'next_batch'):
+                if log:
+                    log.debug(f"Успешная синхронизация, next_batch: {sync_response.next_batch}")
+            else:
+                if log:
+                    log.warning(f"Проблема с синхронизацией: {sync_response}")
+
+        except asyncio.CancelledError:
+            if log:
+                log.info("Синхронизация остановлена по запросу")
+            break
         except Exception as e:
-            log.error(f"Ошибка синхронизации: {get_exception_traceback_descr(e)}")
+            if log:
+                log.error(f"Ошибка синхронизации: {str(e)}")
             await asyncio.sleep(5)
 
 
 async def run_web_server() -> None:
     """Запуск веб-сервера."""
-    global web
+    global web, log
     
-    log.info("Веб-сервер запускается")
+    if log:
+        log.info("Запуск веб-сервера")
     
     server_config = Config()
     server_config.bind = ["0.0.0.0:8000"]
@@ -221,7 +282,8 @@ async def run_web_server() -> None:
     try:
         await serve(web, server_config)
     except Exception as e:
-        log.critical(f"Ошибка веб-сервера: {get_exception_traceback_descr(e)}")
+        if log:
+            log.critical(f"Ошибка веб-сервера: {get_exception_traceback_descr(e)}")
         raise
 
 
@@ -235,17 +297,20 @@ async def main() -> None:
         client = await initialize_client()
         web = create_web_app()
         
-        log.info("Инициализация прошла успешно")
-        
+        if log:
+            log.info("Инициализация завершена успешно")
+
         await asyncio.gather(
             run_web_server(),
             run_matrix_bot(),
         )
         
     except asyncio.CancelledError:
-        log.info("Приложение остановлено по запросу")
+        if log:
+            log.info("Приложение остановлено по запросу")
     except Exception as e:
-        log.critical(f"Критическая ошибка: {get_exception_traceback_descr(e)}")
+        if log:
+            log.critical(f"Критическая ошибка: {get_exception_traceback_descr(e)}")
         raise
     finally:
         if client:
@@ -256,12 +321,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        if log:
-            log.info("Приложение остановлено по сигналу KeyboardInterrupt")
-        else:
-            print("Приложение остановлено по сигналу KeyboardInterrupt")
+        log.info("Приложение остановлено по сигналу KeyboardInterrupt")
     except Exception as e:
-        if log:
-            log.critical(f"Необработанное исключение: {get_exception_traceback_descr(e)}")
-        else:
-            print(f"Необработанное исключение: {str(e)}")
+        log.critical(f"Необработанное исключение: {get_exception_traceback_descr(e)}")
