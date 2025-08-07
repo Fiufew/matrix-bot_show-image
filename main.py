@@ -7,7 +7,6 @@ import random
 import string
 import traceback
 from io import BytesIO
-from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -27,7 +26,7 @@ web = None
 config = None
 
 
-def setup_logging(config_file: str = "config.ini") -> logging.Logger:
+def setup_logging(config_file = "config.ini"):
     """Инициализация и настройка системы логирования."""
     global log
     
@@ -65,7 +64,7 @@ def setup_logging(config_file: str = "config.ini") -> logging.Logger:
     return logger
 
 
-async def load_config() -> Dict[str, Any]:
+async def load_config():
     """Загрузка конфигурации из файла."""
     config_file = "config.ini"
     parser = configparser.ConfigParser()
@@ -88,7 +87,7 @@ async def load_config() -> Dict[str, Any]:
     }
 
 
-async def initialize_client() -> AsyncClient:
+async def initialize_client():
     """Инициализация клиента Matrix с аутентификацией по паролю."""
     global client, config, log
     
@@ -122,7 +121,7 @@ async def initialize_client() -> AsyncClient:
     return client
 
 
-def create_web_app() -> FastAPI:
+def create_web_app():
     """Создание и настройка FastAPI приложения."""
     app = FastAPI()
 
@@ -168,21 +167,21 @@ def create_web_app() -> FastAPI:
     return app
 
 
-def get_exception_traceback_descr(e: Exception) -> str:
+def get_exception_traceback_descr(e):
     """Форматирование описания исключения."""
     if hasattr(e, '__traceback__'):
         return "".join(traceback.format_exception(type(e), e, e.__traceback__))
     return str(e)
 
 
-def generate_filename(original_name: str) -> str:
+def generate_filename(original_name):
     """Генерация случайного имени файла с сохранением расширения."""
     file_ext = os.path.splitext(original_name)[1]
     random_name = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     return f"{random_name}{file_ext if file_ext else '.jpeg'}"
 
 
-async def find_mxc_url(client: AsyncClient, url: str) -> tuple[str, str]:
+async def find_mxc_url(client, url):
     """Извлечение mxc-ссылки и имени файла из URL."""
     global log
     
@@ -221,7 +220,7 @@ async def find_mxc_url(client: AsyncClient, url: str) -> tuple[str, str]:
             log.error(error_msg)
         raise ValueError(error_msg)
 
-async def check_connection(client: AsyncClient) -> bool:
+async def check_connection(client):
     try:
         await client.sync(timeout=5000)
         return True
@@ -269,7 +268,7 @@ async def run_matrix_bot():
             await asyncio.sleep(5)
 
 
-async def run_web_server() -> None:
+async def run_web_server():
     """Запуск веб-сервера."""
     global web, log
     
@@ -287,7 +286,7 @@ async def run_web_server() -> None:
         raise
 
 
-async def main() -> None:
+async def main():
     """Основная функция приложения."""
     global log, config, client, web
     
