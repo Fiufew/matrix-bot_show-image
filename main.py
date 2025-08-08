@@ -177,30 +177,84 @@ def create_web_app():
     return app
 
 def check_allow_invite(user):
+    """Проверка разрешения на приглашение пользователя."""
     global config, log
+    
     try:
-        if "INVITE" not in config:
-            log.warning("Секция INVITE не найдена в конфиге")
-            return False
+        allow = False
+        allow_mask = False
+        
+        if log:
+            log.info(f"Проверка разрешений для пользователя: {user}")
         
         allow_users = [u.strip() for u in config["INVITE"].get("allow_users", "").split() if u.strip()]
-        
-        log.debug(f"Проверка пользователя: {user}")
-        log.debug(f"Разрешенные пользователи: {allow_users}")
-        
-        if user in allow_users:
-            log.info(f"Пользователь {user} явно разрешен")
-            return True
+        allow_domains = [u.strip() for u in config["INVITE"].get("allow_domains", "").split() if u.strip()]
+        deny_users = [u.strip() for u in config["INVITE"].get("deny_users", "").split() if u.strip()]
+        deny_domains = [u.strip() for u in config["INVITE"].get("deny_domains", "").split() if u.strip()]
 
-        if any(user.lower() == allowed.lower() for allowed in allow_users):
-            log.info(f"Пользователь {user} разрешен (без учета регистра)")
-            return True
-            
-        log.warning(f"Пользователь {user} не найден в списке разрешенных")
-        return False
+        if log:
+            log.debug(
+                f"Параметры проверки: allow_users={allow_users}, "
+                f"allow_domains={allow_domains}, deny_users={deny_users}, "
+                f"deny_domains={deny_domains}"
+            )
+        
+        if allow_domains:
+            for domain in allow_domains:
+                if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
+                    allow = True
+                    allow_mask = False
+                    if log:
+                        log.info(
+                            f"Пользователь {user} из разрешенного домена {domain} - доступ разрешен"
+                        )
+                    break
+                if allow_domains == '*':
+                    allow = True
+                    allow_mask = True
+                    if log:
+                        log.info("Обнаружен wildcard домен '*' - доступ разрешен по умолчанию")
+                    break
+
+        if allow_mask and deny_domains:
+            for domain in deny_domains:
+                if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
+                    allow = False
+                    if log:
+                        log.info(
+                            f"Пользователь {user} из запрещенного домена {domain} - доступ запрещен"
+                        )
+                    break
+
+        if deny_users:
+            for deny_user in deny_users:
+                if deny_user.lower() == user.lower():
+                    allow = False
+                    if log:
+                        log.info(
+                            f"Пользователь {user} в списке запрещенных - доступ запрещен"
+                        )
+                    break
+
+        if allow_users:
+            for allow_user in allow_users:
+                if allow_user.lower() == user.lower():
+                    allow = True
+                    if log:
+                        log.info(
+                            f"Пользователь {user} в списке разрешенных - доступ разрешен"
+                        )
+                    break
+
+        if log:
+            log.info(f"Результат проверки для {user}: {'разрешен' if allow else 'запрещен'}")
+        
+        return allow
         
     except Exception as e:
-        log.error(f"Ошибка проверки приглашения: {get_exception_traceback_descr(e)}")
+        error_msg = f"Ошибка проверки разрешений: {get_exception_traceback_descr(e)}"
+        if log:
+            log.error(error_msg)
         return False
 
 async def invite_cb(room, event):
