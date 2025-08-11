@@ -56,7 +56,6 @@ python3 main.py
 ```
 https://matrix.to/#/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k?via=matrix.org
 ```
-
 - это пригласительная ссылка, но она дает нам полчить:
 room_id - номер комнаты, шаблон (!abc:example.org) - в данном примере - !EwKGTvmhz####XXqZ:matrix.org
 event_id - номер события (фотография идет как самостоятельное событие), шаблон ($AbC) - в данном примере - $8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
@@ -64,8 +63,9 @@ event_id - номер события (фотография идет как са�
 2. Соответственно при запущенном и полностью рабочем веб-сервере:
 - нам интересен ЕДИНСТВЕННЫЙ эндпоинт - https://<адрес сервера>/image/
 - далее нам необходимо любым способом (в ручную, с помощью скрипта) преобразовать ранее скопированную ссылку в:
+```
 !EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k - то есть в набор необходимых аргументов
-
+```
 3. Запускаем или подставляем после https://<адрес сервера>/image/ аргументы и получаем:
 ```
 https://<адрес сервера>/image/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
