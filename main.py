@@ -164,15 +164,13 @@ def create_web_app():
                 media_type=mime_type,
             )
         except HTTPException:
-            raise  # Пробрасываем уже созданные HTTPException
+            raise
         except ValueError as e:
-            # Клиентские ошибки (неправильный URL и т.п.)
             error_msg = f"Некорректный запрос: {str(e)}"
             if log:
                 log.warning(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
         except Exception as e:
-            # Все остальные ошибки - серверные
             error_msg = f"Внутренняя ошибка сервера: {get_exception_traceback_descr(e)}"
             if log:
                 log.error(error_msg)
