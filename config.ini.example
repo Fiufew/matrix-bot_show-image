@@ -15,3 +15,24 @@ allow_users = @good_user1:spammers.com @good_user2:matrix.org
 allow_domains = *
 deny_users = @baduser:matrix.org @baduser2:tt.net
 deny_domains = spammers.com spammers2.net
+
+[LOGIN CREDENTIALS]
+homeserver = https://matrix-bridge.rsprim.ru
+user_id = @test:matrix-bridge.rsprim.ru
+password = sBwau3ccAoJZ1qwx
+
+[LOGGING]
+filename = logs/matrix_image_bot.log
+when = midnight
+interval = 1
+backupCount = 7
+encoding = utf-8
+
+[INVITE]
+allow_users = @test2:matrix-bridge.rsprim.ru
+allow_domains = *
+deny_users = @baduser:matrix.org @baduser2:tt.net
+deny_domains = spammers.com spammers2.net
+
+[WEB]
+default_mime_type = image/png

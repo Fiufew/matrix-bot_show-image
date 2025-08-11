@@ -155,24 +155,28 @@ def create_web_app():
                     log.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
             
-            mime_type, _ = mimetypes.guess_type(filename)
-            if mime_type is None:
-                mime_type = "image/jpeg"
-                if log:
-                    log.warning(f"Не удалось определить тип файла для {filename}, используется image/jpeg")
+            mime_type = get_mime_type(filename)
+            if log and mime_type == "application/octet-stream":
+                log.warning(f"Не удалось определить тип файла для {filename}, используется application/octet-stream")
             
             return StreamingResponse(
                 BytesIO(response.body),
                 media_type=mime_type,
             )
-            
         except HTTPException:
-            raise
+            raise  # Пробрасываем уже созданные HTTPException
+        except ValueError as e:
+            # Клиентские ошибки (неправильный URL и т.п.)
+            error_msg = f"Некорректный запрос: {str(e)}"
+            if log:
+                log.warning(error_msg)
+            raise HTTPException(status_code=400, detail=error_msg)
         except Exception as e:
-            error_msg = f"Ошибка обработки запроса {url}: {get_exception_traceback_descr(e)}"
+            # Все остальные ошибки - серверные
+            error_msg = f"Внутренняя ошибка сервера: {get_exception_traceback_descr(e)}"
             if log:
                 log.error(error_msg)
-            raise HTTPException(status_code=400, detail=error_msg)
+            raise HTTPException(status_code=500, detail="Internal Server Error")
 
     return app
 
@@ -289,12 +293,10 @@ def get_exception_traceback_descr(e):
     return str(e)
 
 
-def generate_filename(original_name):
-    """Генерация случайного имени файла с сохранением расширения."""
-    file_ext = os.path.splitext(original_name)[1]
-    random_name = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    return f"{random_name}{file_ext if file_ext else '.jpeg'}"
-
+def get_mime_type(filename):
+    """Определение MIME-типа файла на основе его имени или расширения."""
+    mime_type, _ = mimetypes.guess_type(filename)
+    return mime_type or "application/octet-stream"
 
 async def find_mxc_url(client, url):
     """Извлечение mxc-ссылки и имени файла из URL."""
@@ -327,7 +329,7 @@ async def find_mxc_url(client, url):
                 log.error(error_msg)
             raise ValueError(error_msg)
             
-        return url_mxc, generate_filename(filename)
+        return url_mxc, filename
         
     except Exception as e:
         error_msg = f"Ошибка обработки URL: {str(e)}"

@@ -2,7 +2,7 @@
 
 **Бот для доступа к изображениям через Matrix API**
 
-Бот предоставляет альтернативный способ просмотра изображений из Matrix, когда стандартная функция "Поделиться" недоступна.
+Бот решает проблему доступа к изображениям на новых серверах Matrix, где доступ к медиа без аутентификации запрещён из-за изменений в API
 
 ## Установка и запуск
 
@@ -36,6 +36,9 @@ allow_users = @good_user1:spammers.com @good_user2:matrix.org
 allow_domains = *
 deny_users = @baduser:matrix.org @baduser2:tt.net
 deny_domains = spammers.com spammers2.net
+
+[WEB]
+default_mime_type = image/jpeg
 ```
 
 4. Запуск
@@ -43,12 +46,29 @@ deny_domains = spammers.com spammers2.net
 python3 main.py
 ```
 
-5.Отправьте запрос на:
+ПРИМЕР РАБОТЫ НА КОНКРЕТНОЙ ССЫЛКЕ:
+1. Берем ссылку через "Поделиться"
+- нажимаем на изображение 
+- параметры (Options)
+- поделиться (Share)
+- скопировать ссылку (Copy link)
+ссылка имеет формат:
 ```
-http://ваш-сервер/image/!room_id:server.com/$event_id
+https://matrix.to/#/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k?via=matrix.org
 ```
 
-пример:
+- это пригласительная ссылка, но она дает нам полчить:
+room_id - номер комнаты, шаблон (!abc:example.org) - в данном примере - !EwKGTvmhz####XXqZ:matrix.org
+event_id - номер события (фотография идет как самостоятельное событие), шаблон ($AbC) - в данном примере - $8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
+
+2. Соответственно при запущенном и полностью рабочем веб-сервере:
+- нам интересен ЕДИНСТВЕННЫЙ эндпоинт - https://<адрес сервера>/image/
+- далее нам необходимо любым способом (в ручную, с помощью скрипта) преобразовать ранее скопированную ссылку в:
+!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k - то есть в набор необходимых аргументов
+
+3. Запускаем или подставляем после https://<адрес сервера>/image/ аргументы и получаем:
 ```
-http://localhost:8000/image/!abcdefg:matrix.org/$1234567890
+https://<адрес сервера>/image/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
 ```
+
+4. В итоге получаем изображение ВАЖНОЕ условие, бот должен находится в той комнате (room_id) откуда мы берем изображение
