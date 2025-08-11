@@ -59,7 +59,7 @@ def setup_logging():
     log = logger
     return logger
 
-async def load_config(config_path="config.ini"):
+async def load_config(config_path):
     """
     Загрузка конфигурации из файла.
     Если файл отсутствует, создает его из шаблона и просит перезапустить приложение.
@@ -89,9 +89,11 @@ async def load_config(config_path="config.ini"):
 
     required_sections = {
         "LOGIN CREDENTIALS": ["homeserver", "user_id", "password"],
-        "LOGGING": ["filename", "when", "interval", "backupCount", "encoding"]
+        "LOGGING": ["filename", "when", "interval", "backupCount", "encoding"],
+        "INVITE": ["allow_users", "allow_domains", "deny_users", "deny_domains"],
+        "WEB": ["default_mime_type"]
     }
-    
+
     for section, keys in required_sections.items():
         if not parser.has_section(section):
             raise ValueError(f"Отсутствует обязательная секция {section}")
@@ -181,10 +183,9 @@ def check_allow_invite(user):
     
     try:
         allow = False
-        allow_mask = False
-        
+
         log.info(f"Проверка разрешений для пользователя: {user}")
-        
+
         allow_users = [u.strip() for u in config["INVITE"].get("allow_users", "").split() if u.strip()]
         allow_domains = [u.strip() for u in config["INVITE"].get("allow_domains", "").split() if u.strip()]
         deny_users = [u.strip() for u in config["INVITE"].get("deny_users", "").split() if u.strip()]
@@ -200,7 +201,6 @@ def check_allow_invite(user):
             for domain in allow_domains:
                 if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
                     allow = True
-                    allow_mask = False
                     log.info(f"Пользователь {user} из разрешенного домена {domain} - доступ разрешен")
                     break
                 if allow_domains == '*':
