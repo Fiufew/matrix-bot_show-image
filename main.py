@@ -1,13 +1,13 @@
+import argparse
 import asyncio
 import configparser
 import logging
 import mimetypes
 import os
-import random
 import re
-import string
 import traceback
 from io import BytesIO
+from logging.handlers import TimedRotatingFileHandler
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,24 +20,17 @@ from nio import (
     JoinError,
     InviteEvent
 )
-from logging.handlers import TimedRotatingFileHandler
-
 
 client = None
 log = None
 web = None
 config = None
 
-
-def setup_logging(config_file = "config.ini"):
-    """Инициализация и настройка системы логирования."""
-    global log
+def setup_logging():
+    """Настройка системы логирования на основе конфигурации."""
+    global log, config
     
-    parser = configparser.ConfigParser()
-    if not parser.read(config_file):
-        raise FileNotFoundError(f"Конфигурационный файл {config_file} не найден")
-
-    log_dir = os.path.dirname(parser["LOGGING"]["filename"])
+    log_dir = os.path.dirname(config["LOGGING"]["filename"])
     os.makedirs(log_dir, exist_ok=True)
 
     logger = logging.getLogger()
@@ -47,11 +40,11 @@ def setup_logging(config_file = "config.ini"):
         logger.removeHandler(handler)
 
     handler = TimedRotatingFileHandler(
-        filename=parser["LOGGING"]["filename"],
-        when=parser["LOGGING"]["when"],
-        interval=int(parser["LOGGING"]["interval"]),
-        backupCount=int(parser["LOGGING"]["backupCount"]),
-        encoding=parser["LOGGING"]["encoding"],
+        filename=config["LOGGING"]["filename"],
+        when=config["LOGGING"]["when"],
+        interval=int(config["LOGGING"]["interval"]),
+        backupCount=int(config["LOGGING"]["backupcount"]),
+        encoding=config["LOGGING"]["encoding"],
     )
 
     formatter = logging.Formatter(
@@ -59,104 +52,110 @@ def setup_logging(config_file = "config.ini"):
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    
+
     logging.getLogger("nio").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
     log = logger
     return logger
 
-
-async def load_config():
-    """Загрузка конфигурации из файла."""
-    config_file = "config.ini"
+async def load_config(config_path="config.ini"):
+    """
+    Загрузка конфигурации из файла.
+    Если файл отсутствует, создает его из шаблона и просит перезапустить приложение.
+    """
+    global config
+    
     parser = configparser.ConfigParser()
-    
-    if not parser.read(config_file):
-        raise FileNotFoundError(f"Конфигурационный файл {config_file} не найден")
-    
-    if not parser.has_section("LOGIN CREDENTIALS"):
-        raise ValueError("В конфигурационном файле отсутствует секция LOGIN CREDENTIALS")
-    
-    required_keys = ['homeserver', 'user_id', 'password']
-    missing_keys = [key for key in required_keys if key not in parser["LOGIN CREDENTIALS"]]
-    if missing_keys:
-        raise ValueError(f"Отсутствуют обязательные параметры в конфигурации: {', '.join(missing_keys)}")
-    
-    config_dict = {
-        "homeserver": parser["LOGIN CREDENTIALS"]["homeserver"],
-        "user_id": parser["LOGIN CREDENTIALS"]["user_id"],
-        "password": parser["LOGIN CREDENTIALS"]["password"],
+    template_path = os.path.join(os.path.dirname(__file__), "config.ini.example")
+
+    if not parser.read(config_path):
+        try:
+            if not os.path.exists(template_path):
+                raise FileNotFoundError(f"Шаблон конфигурации не найден: {template_path}")
+            
+            with open(template_path, 'r') as template_file:
+                template_content = template_file.read()
+            
+            with open(config_path, "w") as f:
+                f.write(template_content)
+            
+            print(f"Создан новый конфигурационный файл {config_path} из шаблона.")
+            print("Пожалуйста, настройте его и перезапустите приложение.")
+            exit(0)
+            
+        except Exception as e:
+            raise FileNotFoundError(f"Не удалось создать конфиг {config_path}: {str(e)}")
+
+    required_sections = {
+        "LOGIN CREDENTIALS": ["homeserver", "user_id", "password"],
+        "LOGGING": ["filename", "when", "interval", "backupCount", "encoding"]
     }
     
-    for section in parser.sections():
-        if section != "LOGIN CREDENTIALS":
-            config_dict[section] = dict(parser[section])
-    
-    return config_dict
+    for section, keys in required_sections.items():
+        if not parser.has_section(section):
+            raise ValueError(f"Отсутствует обязательная секция {section}")
+        
+        missing_keys = [key for key in keys if key not in parser[section]]
+        if missing_keys:
+            raise ValueError(f"Отсутствуют обязательные параметры в секции {section}: {', '.join(missing_keys)}")
 
+    config = {}
+    for section in parser.sections():
+        config[section] = dict(parser[section])
+    
+    return config
 
 async def initialize_client():
-    """Инициализация клиента Matrix с аутентификацией по паролю."""
+    """Инициализация клиента Matrix с аутентификацией."""
     global client, config, log
     
-    if client is None:
-        if config is None:
-            config = await load_config()
-        
-        try:
-            client = AsyncClient(
-                homeserver=config["homeserver"],
-                user=config["user_id"],
-                ssl=False
-            )
+    try:
+        client = AsyncClient(
+            homeserver=config["LOGIN CREDENTIALS"]["homeserver"],
+            user=config["LOGIN CREDENTIALS"]["user_id"],
+            ssl=False
+        )
 
-            await client.login(
-                password=config["password"],
-                device_name="Matrix Image Bot"
-            )
+        await client.login(
+            password=config["LOGIN CREDENTIALS"]["password"],
+            device_name="Matrix Image Bot"
+        )
 
-            client.add_event_callback(invite_cb, InviteEvent)
+        client.add_event_callback(invite_cb, InviteEvent)
 
-            if log:
-                log.info("Успешный вход в Matrix по паролю")
-                log.debug(f"User ID: {client.user_id}")
+        log.info("Успешный вход в Matrix")
+        log.debug(f"User ID: {client.user_id}")
 
-        except Exception as e:
-            error_msg = f"Ошибка инициализации клиента: {str(e)}"
-            if log:
-                log.error(error_msg)
-            raise ConnectionError(error_msg)
+    except Exception as e:
+        log.error(f"Ошибка инициализации клиента: {str(e)}")
+        raise ConnectionError(f"Ошибка инициализации клиента: {str(e)}")
     
     return client
 
-
 def create_web_app():
-    """Создание и настройка FastAPI приложения."""
+    """Создание FastAPI приложения для обработки запросов изображений."""
     app = FastAPI()
 
     @app.get("/image/{url:path}")
     async def get_matrix_image(url: str):
-        """Обработчик запросов изображений."""
+        """Получение изображения из Matrix по URL."""
         global client, log
         
         try:
-            if log:
-                log.info(f"Запрос изображения по URL: {url}")
+            log.info(f"Запрос изображения по URL: {url}")
             
             mxc_url, filename = await find_mxc_url(client, url)
-            if log:
-                log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}. Успешно")
+            log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}. Успешно")
             
             response = await client.download(mxc_url)
             if not isinstance(response, DownloadResponse):
                 error_msg = f"Ошибка загрузки изображения. Ответ сервера: {response}"
-                if log:
-                    log.error(error_msg)
+                log.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
             
             mime_type = get_mime_type(filename)
-            if log and mime_type == "application/octet-stream":
+            if mime_type == "application/octet-stream":
                 log.warning(f"Не удалось определить тип файла для {filename}, используется application/octet-stream")
             
             return StreamingResponse(
@@ -167,99 +166,81 @@ def create_web_app():
             raise
         except ValueError as e:
             error_msg = f"Некорректный запрос: {str(e)}"
-            if log:
-                log.warning(error_msg)
+            log.warning(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
         except Exception as e:
             error_msg = f"Внутренняя ошибка сервера: {get_exception_traceback_descr(e)}"
-            if log:
-                log.error(error_msg)
+            log.error(error_msg)
             raise HTTPException(status_code=500, detail="Internal Server Error")
 
     return app
 
 def check_allow_invite(user):
-    """Проверка разрешения на приглашение пользователя."""
+    """Проверка разрешений для приглашения пользователя в комнату."""
     global config, log
     
     try:
         allow = False
         allow_mask = False
         
-        if log:
-            log.info(f"Проверка разрешений для пользователя: {user}")
+        log.info(f"Проверка разрешений для пользователя: {user}")
         
         allow_users = [u.strip() for u in config["INVITE"].get("allow_users", "").split() if u.strip()]
         allow_domains = [u.strip() for u in config["INVITE"].get("allow_domains", "").split() if u.strip()]
         deny_users = [u.strip() for u in config["INVITE"].get("deny_users", "").split() if u.strip()]
         deny_domains = [u.strip() for u in config["INVITE"].get("deny_domains", "").split() if u.strip()]
 
-        if log:
-            log.debug(
-                f"Параметры проверки: allow_users={allow_users}, "
-                f"allow_domains={allow_domains}, deny_users={deny_users}, "
-                f"deny_domains={deny_domains}"
-            )
+        log.debug(
+            f"Параметры проверки: allow_users={allow_users}, "
+            f"allow_domains={allow_domains}, deny_users={deny_users}, "
+            f"deny_domains={deny_domains}"
+        )
         
         if allow_domains:
             for domain in allow_domains:
                 if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
                     allow = True
                     allow_mask = False
-                    if log:
-                        log.info(
-                            f"Пользователь {user} из разрешенного домена {domain} - доступ разрешен"
-                        )
+                    log.info(f"Пользователь {user} из разрешенного домена {domain} - доступ разрешен")
                     break
                 if allow_domains == '*':
                     allow = True
                     allow_mask = True
-                    if log:
-                        log.info("Обнаружен wildcard домен '*' - доступ разрешен по умолчанию")
+                    log.info("Обнаружен wildcard домен '*' - доступ разрешен по умолчанию")
                     break
 
         if allow_mask and deny_domains:
             for domain in deny_domains:
                 if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
                     allow = False
-                    if log:
-                        log.info(
-                            f"Пользователь {user} из запрещенного домена {domain} - доступ запрещен"
-                        )
+                    log.info(f"Пользователь {user} из запрещенного домена {domain} - доступ запрещен")
                     break
 
         if deny_users:
             for deny_user in deny_users:
                 if deny_user.lower() == user.lower():
                     allow = False
-                    if log:
-                        log.info(
-                            f"Пользователь {user} в списке запрещенных - доступ запрещен"
-                        )
+                    log.info(f"Пользователь {user} в списке запрещенных - доступ запрещен")
                     break
 
         if allow_users:
             for allow_user in allow_users:
                 if allow_user.lower() == user.lower():
                     allow = True
-                    if log:
-                        log.info(
-                            f"Пользователь {user} в списке разрешенных - доступ разрешен"
-                        )
+                    log.info(f"Пользователь {user} в списке разрешенных - доступ разрешен")
                     break
 
-        if log:
-            log.info(f"Результат проверки для {user}: {'разрешен' if allow else 'запрещен'}")
+        log.info(f"Результат проверки для {user}: {'разрешен' if allow else 'запрещен'}")
         
         return allow
         
     except Exception as e:
         error_msg = f"Ошибка проверки разрешений: {get_exception_traceback_descr(e)}"
-        if log:
-            log.error(error_msg)
+        log.error(error_msg)
         return False
 
 async def invite_cb(room, event):
+    """Callback для обработки приглашений в комнаты Matrix."""
     global client, log
     try:
         log.info(f"Получено приглашение от {event.sender} в комнату {room.room_id}")
@@ -283,26 +264,23 @@ async def invite_cb(room, event):
         log.error(f"Ошибка обработки приглашения: {get_exception_traceback_descr(e)}")
         return False
 
-
 def get_exception_traceback_descr(e):
-    """Форматирование описания исключения."""
+    """Получение полного описания исключения с трейсбэком."""
     if hasattr(e, '__traceback__'):
         return "".join(traceback.format_exception(type(e), e, e.__traceback__))
     return str(e)
 
-
 def get_mime_type(filename):
-    """Определение MIME-типа файла на основе его имени или расширения."""
+    """Определение MIME-типа файла по его имени."""
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type or "application/octet-stream"
 
 async def find_mxc_url(client, url):
-    """Извлечение mxc-ссылки и имени файла из URL."""
+    """Извлечение mxc-ссылки и имени файла из URL Matrix события."""
     global log
     
     try:
-        if log:
-            log.info(f"Извлечение mxc-ссылки из {url}")
+        log.info(f"Извлечение mxc-ссылки из {url}")
         
         parts = url.split("/")
         if len(parts) < 2:
@@ -313,8 +291,7 @@ async def find_mxc_url(client, url):
         response = await client.room_get_event(room_id=room_id, event_id=event_id)
         if not isinstance(response, RoomGetEventResponse):
             error_msg = "Неверный ответ от сервера Matrix"
-            if log:
-                log.error(error_msg)
+            log.error(error_msg)
             raise ValueError(error_msg)
         
         content = response.event.source.get('content', {})
@@ -323,69 +300,58 @@ async def find_mxc_url(client, url):
         
         if not url_mxc:
             error_msg = "Не удалось извлечь mxc-ссылку"
-            if log:
-                log.error(error_msg)
+            log.error(error_msg)
             raise ValueError(error_msg)
             
         return url_mxc, filename
         
     except Exception as e:
         error_msg = f"Ошибка обработки URL: {str(e)}"
-        if log:
-            log.error(error_msg)
+        log.error(error_msg)
         raise ValueError(error_msg)
 
 async def check_connection(client):
+    """Проверка соединения с сервером Matrix."""
     try:
         await client.sync(timeout=5000)
         return True
     except Exception as e:
         if "M_UNKNOWN_TOKEN" in str(e):
-            if log:
-                log.warning("Обнаружен невалидный токен, требуется переаутентификация")
+            log.warning("Обнаружен невалидный токен, требуется переаутентификация")
             return False
-        if log:
-            log.warning(f"Ошибка проверки соединения: {str(e)}")
+        log.warning(f"Ошибка проверки соединения: {str(e)}")
         return False
 
-
 async def run_matrix_bot():
+    """Основной цикл работы Matrix бота."""
     global client
-    if log:
-        log.info("Matrix бот запущен")
+    log.info("Matrix бот запущен")
     
     while True:
         try:
             if not await check_connection(client):
-                if log:
-                    log.warning("Проблема с соединением или аутентификацией, переподключение")
+                log.warning("Проблема с соединением или аутентификацией, переподключение")
                 await client.close()
                 client = await initialize_client()
                 continue
             
             sync_response = await client.sync(timeout=30000, full_state=True)
             if hasattr(sync_response, 'next_batch'):
-                if log:
-                    log.debug(f"Успешная синхронизация, next_batch: {sync_response.next_batch}")
+                log.debug(f"Успешная синхронизация, next_batch: {sync_response.next_batch}")
             else:
-                if log:
-                    log.warning(f"Проблема с синхронизацией: {sync_response}")
+                log.warning(f"Проблема с синхронизацией: {sync_response}")
         except asyncio.CancelledError:
-            if log:
-                log.info("Синхронизация остановлена по запросу")
+            log.info("Синхронизация остановлена по запросу")
             break
         except Exception as e:
-            if log:
-                log.error(f"Ошибка синхронизации: {str(e)}")
+            log.error(f"Ошибка синхронизации: {str(e)}")
             await asyncio.sleep(5)
 
-
 async def run_web_server():
-    """Запуск веб-сервера."""
+    """Запуск веб-сервера FastAPI."""
     global web, log
     
-    if log:
-        log.info("Запуск веб-сервера")
+    log.info("Запуск веб-сервера")
     
     server_config = Config()
     server_config.bind = ["0.0.0.0:8000"]
@@ -393,23 +359,37 @@ async def run_web_server():
     try:
         await serve(web, server_config)
     except Exception as e:
-        if log:
-            log.critical(f"Ошибка веб-сервера: {get_exception_traceback_descr(e)}")
+        log.critical(f"Ошибка веб-сервера: {get_exception_traceback_descr(e)}")
         raise
 
-
 async def main():
-    """Основная функция приложения."""
+    """Основная функция инициализации и запуска приложения."""
     global log, config, client, web
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    temp_log = logging.getLogger("init")
     
     try:
-        log = setup_logging()
-        config = await load_config()
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--config", default="config.ini", help="Path to config file")
+        args = parser.parse_args()
+        
+        temp_log.info(f"Загрузка конфигурации из {args.config}")
+
+        await load_config(args.config)
+        
+        setup_logging()
+        log = logging.getLogger()
+        
+        log.info("Конфигурация загружена, инициализация компонентов...")
+        
         client = await initialize_client()
         web = create_web_app()
         
-        if log:
-            log.info("Инициализация завершена успешно")
+        log.info("Инициализация завершена успешно, запуск сервисов")
 
         await asyncio.gather(
             run_web_server(),
@@ -417,21 +397,19 @@ async def main():
         )
         
     except asyncio.CancelledError:
-        if log:
-            log.info("Приложение остановлено по запросу")
+        log.info("Приложение остановлено по запросу")
     except Exception as e:
-        if log:
-            log.critical(f"Критическая ошибка: {get_exception_traceback_descr(e)}")
+        error_msg = f"Критическая ошибка: {get_exception_traceback_descr(e)}"
+        log.critical(error_msg)
         raise
     finally:
         if client:
             await client.close()
 
-
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        log.info("Приложение остановлено по сигналу KeyboardInterrupt")
+        logging.getLogger().info("Приложение остановлено по сигналу KeyboardInterrupt")
     except Exception as e:
-        log.critical(f"Необработанное исключение: {get_exception_traceback_descr(e)}")
+        logging.getLogger().critical(f"Фатальная ошибка: {str(e)}")
