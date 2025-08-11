@@ -57,8 +57,8 @@ python3 main.py
 https://matrix.to/#/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k?via=matrix.org
 ```
 - это пригласительная ссылка, но она дает нам полчить:
-room_id - номер комнаты, шаблон (!abc:example.org) - в данном примере - !EwKGTvmhz####XXqZ:matrix.org
-event_id - номер события (фотография идет как самостоятельное событие), шаблон ($AbC) - в данном примере - $8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
+- room_id - номер комнаты, шаблон (!abc:example.org) - в данном примере - !EwKGTvmhz####XXqZ:matrix.org
+- event_id - номер события (фотография идет как самостоятельное событие), шаблон ($AbC) - в данном примере - $8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
 
 2. Соответственно при запущенном и полностью рабочем веб-сервере:
 - нам интересен ЕДИНСТВЕННЫЙ эндпоинт - https://<адрес сервера>/image/
