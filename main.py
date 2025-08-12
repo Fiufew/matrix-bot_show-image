@@ -5,6 +5,8 @@ import logging
 import mimetypes
 import os
 import re
+import signal
+import sys
 import traceback
 from io import BytesIO
 from logging.handlers import TimedRotatingFileHandler
@@ -26,10 +28,11 @@ log = None
 web = None
 config = None
 
+
 def setup_logging():
     """Настройка системы логирования на основе конфигурации."""
     global log, config
-    
+
     log_dir = os.path.dirname(config["LOGGING"]["filename"])
     os.makedirs(log_dir, exist_ok=True)
 
@@ -38,6 +41,8 @@ def setup_logging():
 
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
 
     handler = TimedRotatingFileHandler(
         filename=config["LOGGING"]["filename"],
@@ -51,7 +56,9 @@ def setup_logging():
         "%(asctime)s - %(name)s - %(filename)s:%(lineno)d - %(funcName)s() %(levelname)s - %(message)s"
     )
     handler.setFormatter(formatter)
+    stdout_handler.setFormatter(formatter)
     logger.addHandler(handler)
+    logger.addHandler(stdout_handler)
 
     logging.getLogger("nio").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -59,33 +66,39 @@ def setup_logging():
     log = logger
     return logger
 
+
 async def load_config(config_path):
-    """
-    Загрузка конфигурации из файла.
-    Если файл отсутствует, создает его из шаблона и просит перезапустить приложение.
-    """
+    """Загрузка конфигурации из файла."""
     global config
-    
+
     parser = configparser.ConfigParser()
-    template_path = os.path.join(os.path.dirname(__file__), "config.ini.example")
+    template_path = os.path.join(
+        os.path.dirname(__file__), "config.ini.example"
+        )
 
     if not parser.read(config_path):
         try:
             if not os.path.exists(template_path):
-                raise FileNotFoundError(f"Шаблон конфигурации не найден: {template_path}")
-            
+                raise FileNotFoundError(
+                    f"Шаблон конфигурации не найден: {template_path}"
+                    )
+
             with open(template_path, 'r') as template_file:
                 template_content = template_file.read()
-            
+
             with open(config_path, "w") as f:
                 f.write(template_content)
-            
-            print(f"Создан новый конфигурационный файл {config_path} из шаблона.")
+
+            print(
+                f"Создан новый конфигурационный файл {config_path} из шаблона."
+                )
             print("Пожалуйста, настройте его и перезапустите приложение.")
             exit(0)
-            
+
         except Exception as e:
-            raise FileNotFoundError(f"Не удалось создать конфиг {config_path}: {str(e)}")
+            raise FileNotFoundError(
+                f"Не удалось создать конфиг {config_path}: {str(e)}"
+                )
 
     required_sections = {
         "LOGIN CREDENTIALS": ["homeserver", "user_id", "password"],
@@ -97,7 +110,7 @@ async def load_config(config_path):
     for section, keys in required_sections.items():
         if not parser.has_section(section):
             raise ValueError(f"Отсутствует обязательная секция {section}")
-        
+
         missing_keys = [key for key in keys if key not in parser[section]]
         if missing_keys:
             raise ValueError(f"Отсутствуют обязательные параметры в секции {section}: {', '.join(missing_keys)}")
@@ -105,13 +118,14 @@ async def load_config(config_path):
     config = {}
     for section in parser.sections():
         config[section] = dict(parser[section])
-    
+
     return config
+
 
 async def initialize_client():
     """Инициализация клиента Matrix с аутентификацией."""
     global client, config, log
-    
+
     try:
         client = AsyncClient(
             homeserver=config["LOGIN CREDENTIALS"]["homeserver"],
@@ -132,8 +146,9 @@ async def initialize_client():
     except Exception as e:
         log.error(f"Ошибка инициализации клиента: {str(e)}")
         raise ConnectionError(f"Ошибка инициализации клиента: {str(e)}")
-    
+
     return client
+
 
 def create_web_app():
     """Создание FastAPI приложения для обработки запросов изображений."""
@@ -143,23 +158,27 @@ def create_web_app():
     async def get_matrix_image(url: str):
         """Получение изображения из Matrix по URL."""
         global client, log
-        
+
         try:
             log.info(f"Запрос изображения по URL: {url}")
-            
+
             mxc_url, filename = await find_mxc_url(client, url)
-            log.debug(f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}. Успешно")
-            
+            log.debug(
+                f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}."
+                )
+
             response = await client.download(mxc_url)
             if not isinstance(response, DownloadResponse):
-                error_msg = f"Ошибка загрузки изображения. Ответ сервера: {response}"
+                error_msg = (
+                    f"Ошибка загрузки изображения. Ответ сервера: {response}"
+                    )
                 log.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
-            
+
             mime_type = get_mime_type(filename)
             if mime_type == "application/octet-stream":
                 log.warning(f"Не удалось определить тип файла для {filename}, используется application/octet-stream")
-            
+
             return StreamingResponse(
                 BytesIO(response.body),
                 media_type=mime_type,
@@ -171,16 +190,21 @@ def create_web_app():
             log.warning(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
         except Exception as e:
-            error_msg = f"Внутренняя ошибка сервера: {get_exception_traceback_descr(e)}"
+            error_msg = (
+                f"Внутренняя ошибка сервера: {get_exception_traceback_descr(e)}"
+                )
             log.error(error_msg)
-            raise HTTPException(status_code=500, detail="Internal Server Error")
+            raise HTTPException(
+                status_code=500, detail="Internal Server Error"
+                )
 
     return app
+
 
 def check_allow_invite(user):
     """Проверка разрешений для приглашения пользователя в комнату."""
     global config, log
-    
+
     try:
         allow = False
 
@@ -196,73 +220,86 @@ def check_allow_invite(user):
             f"allow_domains={allow_domains}, deny_users={deny_users}, "
             f"deny_domains={deny_domains}"
         )
-        
+
         if allow_domains:
             for domain in allow_domains:
                 if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
                     allow = True
-                    log.info(f"Пользователь {user} из разрешенного домена {domain} - доступ разрешен")
+                    log.info(
+                        f"Пользователь {user} из разрешенного домена {domain}")
                     break
                 if allow_domains == '*':
                     allow = True
                     allow_mask = True
-                    log.info("Обнаружен wildcard домен '*' - доступ разрешен по умолчанию")
+                    log.info("Обнаружен wildcard домен '*' - доступ разрешен")
                     break
 
         if allow_mask and deny_domains:
             for domain in deny_domains:
                 if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
                     allow = False
-                    log.info(f"Пользователь {user} из запрещенного домена {domain} - доступ запрещен")
+                    log.info(
+                        f"Пользователь {user} из запрещенного домена {domain}"
+                        )
                     break
 
         if deny_users:
             for deny_user in deny_users:
                 if deny_user.lower() == user.lower():
                     allow = False
-                    log.info(f"Пользователь {user} в списке запрещенных - доступ запрещен")
+                    log.info(f"Пользователь {user} в списке запрещенных")
                     break
 
         if allow_users:
             for allow_user in allow_users:
                 if allow_user.lower() == user.lower():
                     allow = True
-                    log.info(f"Пользователь {user} в списке разрешенных - доступ разрешен")
+                    log.info(
+                        f"Пользователь {user} в списке разрешенных"
+                        )
                     break
 
         log.info(f"Результат проверки для {user}: {'разрешен' if allow else 'запрещен'}")
-        
+
         return allow
-        
+
     except Exception as e:
-        error_msg = f"Ошибка проверки разрешений: {get_exception_traceback_descr(e)}"
+        error_msg = (
+            f"Ошибка проверки разрешений: {get_exception_traceback_descr(e)}"
+            )
         log.error(error_msg)
         return False
+
 
 async def invite_cb(room, event):
     """Callback для обработки приглашений в комнаты Matrix."""
     global client, log
     try:
-        log.info(f"Получено приглашение от {event.sender} в комнату {room.room_id}")
+        log.info(
+            f"Получено приглашение от {event.sender} в комнату {room.room_id}"
+            )
         log.debug(f"Детали события: {vars(event)}")
-        
+
         if not check_allow_invite(event.sender):
             log.warning(f"Доступ запрещён для {event.sender}")
             return False
-        
+
         log.info(f"Принимаем приглашение от {event.sender}")
         resp = await client.join(room.room_id)
-        
+
         if isinstance(resp, JoinError):
             log.error(f"Ошибка входа: {resp.message}")
             return False
-        
+
         log.info(f"Успешно присоединились к комнате {room.room_id}")
         return True
-        
+
     except Exception as e:
-        log.error(f"Ошибка обработки приглашения: {get_exception_traceback_descr(e)}")
+        log.error(
+            f"Ошибка обработки приглашения: {get_exception_traceback_descr(e)}"
+            )
         return False
+
 
 def get_exception_traceback_descr(e):
     """Получение полного описания исключения с трейсбэком."""
@@ -270,45 +307,52 @@ def get_exception_traceback_descr(e):
         return "".join(traceback.format_exception(type(e), e, e.__traceback__))
     return str(e)
 
+
 def get_mime_type(filename):
     """Определение MIME-типа файла по его имени."""
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type or "application/octet-stream"
 
+
 async def find_mxc_url(client, url):
     """Извлечение mxc-ссылки и имени файла из URL Matrix события."""
     global log
-    
+
     try:
         log.info(f"Извлечение mxc-ссылки из {url}")
-        
+
         parts = url.split("/")
         if len(parts) < 2:
-            raise ValueError("Неверный формат URL. Ожидается !room_id:server.com/$event_id")
-        
+            raise ValueError(
+                "Неверный формат URL. Ожидается !room_id:server.com/$event_id"
+                )
+
         room_id, event_id = parts[0], parts[1]
-        
-        response = await client.room_get_event(room_id=room_id, event_id=event_id)
+
+        response = await client.room_get_event(
+            room_id=room_id, event_id=event_id
+            )
         if not isinstance(response, RoomGetEventResponse):
             error_msg = "Неверный ответ от сервера Matrix"
             log.error(error_msg)
             raise ValueError(error_msg)
-        
+
         content = response.event.source.get('content', {})
         url_mxc = content.get('url')
         filename = content.get('body', 'image')
-        
+
         if not url_mxc:
             error_msg = "Не удалось извлечь mxc-ссылку"
             log.error(error_msg)
             raise ValueError(error_msg)
-            
+
         return url_mxc, filename
-        
+
     except Exception as e:
         error_msg = f"Ошибка обработки URL: {str(e)}"
         log.error(error_msg)
         raise ValueError(error_msg)
+
 
 async def check_connection(client):
     """Проверка соединения с сервером Matrix."""
@@ -317,27 +361,32 @@ async def check_connection(client):
         return True
     except Exception as e:
         if "M_UNKNOWN_TOKEN" in str(e):
-            log.warning("Обнаружен невалидный токен, требуется переаутентификация")
+            log.warning("Обнаружен невалидный токен, нужна переаутентификация")
             return False
         log.warning(f"Ошибка проверки соединения: {str(e)}")
         return False
+
 
 async def run_matrix_bot():
     """Основной цикл работы Matrix бота."""
     global client
     log.info("Matrix бот запущен")
-    
+
     while True:
         try:
             if not await check_connection(client):
-                log.warning("Проблема с соединением или аутентификацией, переподключение")
+                log.warning(
+                    "Проблема с соединением, переподключение"
+                    )
                 await client.close()
                 client = await initialize_client()
                 continue
-            
+
             sync_response = await client.sync(timeout=30000, full_state=True)
             if hasattr(sync_response, 'next_batch'):
-                log.debug(f"Успешная синхронизация, next_batch: {sync_response.next_batch}")
+                log.debug(
+                    f"Успешная синхронизация: {sync_response.next_batch}"
+                    )
             else:
                 log.warning(f"Проблема с синхронизацией: {sync_response}")
         except asyncio.CancelledError:
@@ -347,20 +396,36 @@ async def run_matrix_bot():
             log.error(f"Ошибка синхронизации: {str(e)}")
             await asyncio.sleep(5)
 
+
 async def run_web_server():
     """Запуск веб-сервера FastAPI."""
     global web, log
-    
+
     log.info("Запуск веб-сервера")
-    
+
     server_config = Config()
     server_config.bind = ["0.0.0.0:8000"]
-    
+
     try:
         await serve(web, server_config)
     except Exception as e:
         log.critical(f"Ошибка веб-сервера: {get_exception_traceback_descr(e)}")
         raise
+
+
+async def shutdown():
+    """Упрощённая обработка завершения работы"""
+    global client, log
+
+    log.info("Завершение работы приложения...")
+
+    if client:
+        try:
+            await client.close()
+            log.info("Matrix-клиент успешно отключен")
+        except Exception as e:
+            log.error(f"Ошибка при закрытии клиента: {str(e)}")
+
 
 async def main():
     """Основная функция инициализации и запуска приложения."""
@@ -371,33 +436,44 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     temp_log = logging.getLogger("init")
-    
+
     try:
         parser = argparse.ArgumentParser()
-        parser.add_argument("--config", default="config.ini", help="Path to config file")
+        parser.add_argument(
+            "--config", default="config.ini", help="Path to config file"
+        )
         args = parser.parse_args()
-        
+
         temp_log.info(f"Загрузка конфигурации из {args.config}")
 
         await load_config(args.config)
-        
+
         setup_logging()
         log = logging.getLogger()
-        
+
         log.info("Конфигурация загружена, инициализация компонентов...")
-        
+
         client = await initialize_client()
         web = create_web_app()
-        
+
         log.info("Инициализация завершена успешно, запуск сервисов")
 
-        await asyncio.gather(
-            run_web_server(),
-            run_matrix_bot(),
-        )
-        
-    except asyncio.CancelledError:
-        log.info("Приложение остановлено по запросу")
+        web_task = asyncio.create_task(run_web_server())
+        bot_task = asyncio.create_task(run_matrix_bot())
+
+        try:
+            await asyncio.wait(
+                [web_task, bot_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+        except KeyboardInterrupt:
+            log.info("Получен сигнал завершения (Ctrl+C)")
+            await shutdown()
+        except Exception as e:
+            log.error(f"Ошибка в работе сервисов: {str(e)}")
+            await shutdown()
+            raise
+
     except Exception as e:
         error_msg = f"Критическая ошибка: {get_exception_traceback_descr(e)}"
         log.critical(error_msg)
@@ -405,11 +481,12 @@ async def main():
     finally:
         if client:
             await client.close()
+            log.info("Matrix-клиент завершил работу")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logging.getLogger().info("Приложение остановлено по сигналу KeyboardInterrupt")
+        logging.getLogger().info("Приложение остановлено по Ctrl+C")
     except Exception as e:
         logging.getLogger().critical(f"Фатальная ошибка: {str(e)}")
