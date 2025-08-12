@@ -5,7 +5,6 @@ import logging
 import mimetypes
 import os
 import re
-import signal
 import sys
 import traceback
 from io import BytesIO
