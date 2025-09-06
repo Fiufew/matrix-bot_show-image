@@ -67,7 +67,6 @@ https://matrix.to/#/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYS
 !EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k - то есть в набор необходимых аргументов
 ```
 3. We launch or substitute the arguments after https://<server address>/image/ and get:
-4. 
 ```
 https://<адрес сервера>/image/!EwKGTvmhz####XXqZ:matrix.org/$8TX3Ou####AOa1qHHdjEjd1lR8zYSEIkLkZXkNyr_9k
 ```
