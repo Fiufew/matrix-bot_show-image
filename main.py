@@ -29,11 +29,16 @@ config = None
 
 
 def setup_logging():
-    """Настройка системы логирования на основе конфигурации."""
+    """Настройка системы логирования на основе конфигурации (без правок конфига)."""
     global log, config
 
-    log_dir = os.path.dirname(config["LOGGING"]["filename"])
-    os.makedirs(log_dir, exist_ok=True)
+    cfg = config["LOGGING"]
+
+    backup_count = int(cfg.get("backupcount", cfg.get("backupCount", "7")))
+
+    log_dir = os.path.dirname(cfg["filename"])
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -44,11 +49,11 @@ def setup_logging():
     stdout_handler = logging.StreamHandler(sys.stdout)
 
     handler = TimedRotatingFileHandler(
-        filename=config["LOGGING"]["filename"],
-        when=config["LOGGING"]["when"],
-        interval=int(config["LOGGING"]["interval"]),
-        backupCount=int(config["LOGGING"]["backupcount"]),
-        encoding=config["LOGGING"]["encoding"],
+        filename=cfg["filename"],
+        when=cfg["when"],
+        interval=int(cfg["interval"]),
+        backupCount=backup_count,
+        encoding=cfg["encoding"],
     )
 
     formatter = logging.Formatter(
@@ -73,31 +78,31 @@ async def load_config(config_path):
     parser = configparser.ConfigParser()
     template_path = os.path.join(
         os.path.dirname(__file__), "config.ini.example"
-        )
+    )
 
     if not parser.read(config_path):
         try:
             if not os.path.exists(template_path):
                 raise FileNotFoundError(
                     f"Шаблон конфигурации не найден: {template_path}"
-                    )
+                )
 
-            with open(template_path, 'r') as template_file:
+            with open(template_path, 'r', encoding="utf-8") as template_file:
                 template_content = template_file.read()
 
-            with open(config_path, "w") as f:
+            with open(config_path, "w", encoding="utf-8") as f:
                 f.write(template_content)
 
             print(
                 f"Создан новый конфигурационный файл {config_path} из шаблона."
-                )
+            )
             print("Пожалуйста, настройте его и перезапустите приложение.")
             exit(0)
 
         except Exception as e:
             raise FileNotFoundError(
                 f"Не удалось создать конфиг {config_path}: {str(e)}"
-                )
+            )
 
     required_sections = {
         "LOGIN CREDENTIALS": ["homeserver", "user_id", "password"],
@@ -110,9 +115,12 @@ async def load_config(config_path):
         if not parser.has_section(section):
             raise ValueError(f"Отсутствует обязательная секция {section}")
 
-        missing_keys = [key for key in keys if key not in parser[section]]
+        section_keys_lower = {k.lower() for k in parser[section].keys()}
+        missing_keys = [k for k in keys if k.lower() not in section_keys_lower]
         if missing_keys:
-            raise ValueError(f"Отсутствуют обязательные параметры в секции {section}: {', '.join(missing_keys)}")
+            raise ValueError(
+                f"Отсутствуют обязательные параметры в секции {section}: {', '.join(missing_keys)}"
+            )
 
     config = {}
     for section in parser.sections():
@@ -164,13 +172,13 @@ def create_web_app():
             mxc_url, filename = await find_mxc_url(client, url)
             log.debug(
                 f"Получена mxc-ссылка: {mxc_url}, имя файла: {filename}."
-                )
+            )
 
             response = await client.download(mxc_url)
             if not isinstance(response, DownloadResponse):
                 error_msg = (
                     f"Ошибка загрузки изображения. Ответ сервера: {response}"
-                    )
+                )
                 log.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
 
@@ -191,11 +199,11 @@ def create_web_app():
         except Exception as e:
             error_msg = (
                 f"Внутренняя ошибка сервера: {get_exception_traceback_descr(e)}"
-                )
+            )
             log.error(error_msg)
             raise HTTPException(
                 status_code=500, detail="Internal Server Error"
-                )
+            )
 
     return app
 
@@ -206,6 +214,7 @@ def check_allow_invite(user):
 
     try:
         allow = False
+        allow_mask = False
 
         log.info(f"Проверка разрешений для пользователя: {user}")
 
@@ -220,52 +229,49 @@ def check_allow_invite(user):
             f"deny_domains={deny_domains}"
         )
 
-        if allow_domains:
+        if len(allow_domains) == 1 and allow_domains[0] == '*':
+            allow = True
+            allow_mask = True
+            log.info("Обнаружен wildcard домен '*' — доступ разрешён для всех доменов")
+        else:
             for domain in allow_domains:
-                if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
+                if re.search(rf'.*:{re.escape(domain.lower())}$', user.lower()) is not None:
                     allow = True
-                    log.info(
-                        f"Пользователь {user} из разрешенного домена {domain}")
-                    break
-                if allow_domains == '*':
-                    allow = True
-                    allow_mask = True
-                    log.info("Обнаружен wildcard домен '*' - доступ разрешен")
+                    log.info(f"Пользователь {user} из разрешенного домена {domain}")
                     break
 
         if allow_mask and deny_domains:
             for domain in deny_domains:
-                if re.search(f'.*:{domain.lower()}$', user.lower()) is not None:
+                if domain == '*':
                     allow = False
                     log.info(
-                        f"Пользователь {user} из запрещенного домена {domain}"
-                        )
+                        "Обнаружен wildcard в deny_domains '*' — доступ запрещён для всех доменов")
                     break
-
-        if deny_users:
-            for deny_user in deny_users:
-                if deny_user.lower() == user.lower():
+                if re.search(rf'.*:{re.escape(domain.lower())}$', user.lower()) is not None:
                     allow = False
-                    log.info(f"Пользователь {user} в списке запрещенных")
+                    log.info(
+                        f"Пользователь {user} из запрещенного домена {domain}")
                     break
 
-        if allow_users:
-            for allow_user in allow_users:
-                if allow_user.lower() == user.lower():
-                    allow = True
-                    log.info(
-                        f"Пользователь {user} в списке разрешенных"
-                        )
-                    break
+        for deny_user in deny_users:
+            if deny_user.lower() == user.lower():
+                allow = False
+                log.info(f"Пользователь {user} в списке запрещенных")
+                break
+
+        for allow_user in allow_users:
+            if allow_user.lower() == user.lower():
+                allow = True
+                log.info(f"Пользователь {user} в списке разрешенных")
+                break
 
         log.info(f"Результат проверки для {user}: {'разрешен' if allow else 'запрещен'}")
-
         return allow
 
     except Exception as e:
         error_msg = (
             f"Ошибка проверки разрешений: {get_exception_traceback_descr(e)}"
-            )
+        )
         log.error(error_msg)
         return False
 
@@ -276,7 +282,7 @@ async def invite_cb(room, event):
     try:
         log.info(
             f"Получено приглашение от {event.sender} в комнату {room.room_id}"
-            )
+        )
         log.debug(f"Детали события: {vars(event)}")
 
         if not check_allow_invite(event.sender):
@@ -296,7 +302,7 @@ async def invite_cb(room, event):
     except Exception as e:
         log.error(
             f"Ошибка обработки приглашения: {get_exception_traceback_descr(e)}"
-            )
+        )
         return False
 
 
@@ -324,13 +330,13 @@ async def find_mxc_url(client, url):
         if len(parts) < 2:
             raise ValueError(
                 "Неверный формат URL. Ожидается !room_id:server.com/$event_id"
-                )
+            )
 
         room_id, event_id = parts[0], parts[1]
 
         response = await client.room_get_event(
             room_id=room_id, event_id=event_id
-            )
+        )
         if not isinstance(response, RoomGetEventResponse):
             error_msg = "Неверный ответ от сервера Matrix"
             log.error(error_msg)
@@ -374,18 +380,14 @@ async def run_matrix_bot():
     while True:
         try:
             if not await check_connection(client):
-                log.warning(
-                    "Проблема с соединением, переподключение"
-                    )
+                log.warning("Проблема с соединением, переподключение")
                 await client.close()
                 client = await initialize_client()
                 continue
 
             sync_response = await client.sync(timeout=30000, full_state=True)
             if hasattr(sync_response, 'next_batch'):
-                log.debug(
-                    f"Успешная синхронизация: {sync_response.next_batch}"
-                    )
+                log.debug(f"Успешная синхронизация: {sync_response.next_batch}")
             else:
                 log.warning(f"Проблема с синхронизацией: {sync_response}")
         except asyncio.CancelledError:
@@ -481,6 +483,7 @@ async def main():
         if client:
             await client.close()
             log.info("Matrix-клиент завершил работу")
+
 
 if __name__ == "__main__":
     try:
